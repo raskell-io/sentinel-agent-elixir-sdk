@@ -473,13 +473,15 @@ sentinel-agent-elixir-sdk/
 
 This SDK implements Sentinel Agent Protocol v1:
 
-- **Transport**: Unix domain sockets
-- **Encoding**: Length-prefixed JSON (4-byte big-endian length prefix)
+- **Transport**: Unix domain sockets (UDS) or gRPC
+- **Encoding**: Length-prefixed JSON (4-byte big-endian length prefix) for UDS
 - **Max message size**: 10 MB
-- **Events**: `configure`, `request_headers`, `request_body_chunk`, `response_headers`, `response_body_chunk`, `request_complete`
+- **Events**: `configure`, `request_headers`, `request_body_chunk`, `response_headers`, `response_body_chunk`, `request_complete`, `websocket_frame`, `guardrail_inspect`
 - **Decisions**: `allow`, `block`, `redirect`, `challenge`
 
 The protocol is designed for low latency and high throughput, with support for streaming body inspection.
+
+For the canonical protocol specification, see the [Sentinel Agent Protocol documentation](https://github.com/raskell-io/sentinel/tree/main/crates/agent-protocol).
 
 ---
 
