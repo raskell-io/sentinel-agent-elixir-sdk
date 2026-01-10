@@ -37,9 +37,11 @@ defmodule SentinelAgentSdk.Agent do
   - `on_response/2` - Called when response headers are received from upstream.
   - `on_response_body/2` - Called when the full response body is available.
   - `on_request_complete/3` - Called when request processing is complete.
+  - `on_guardrail_inspect/1` - Called for guardrail content inspection.
   """
 
   alias SentinelAgentSdk.{Decision, Request, Response}
+  alias SentinelAgentSdk.Protocol.{GuardrailInspectEvent, GuardrailResponse}
 
   @doc """
   Return the agent name for logging and identification.
@@ -99,18 +101,28 @@ defmodule SentinelAgentSdk.Agent do
               duration_ms :: integer()
             ) :: :ok
 
+  @doc """
+  Inspect content for guardrail violations.
+
+  Called when content needs to be analyzed for prompt injection
+  or PII detection. Override to implement custom guardrail logic.
+  """
+  @callback on_guardrail_inspect(event :: GuardrailInspectEvent.t()) :: GuardrailResponse.t()
+
   @optional_callbacks on_configure: 1,
                       on_request: 1,
                       on_request_body: 1,
                       on_response: 2,
                       on_response_body: 2,
-                      on_request_complete: 3
+                      on_request_complete: 3,
+                      on_guardrail_inspect: 1
 
   defmacro __using__(_opts) do
     quote do
       @behaviour SentinelAgentSdk.Agent
 
       alias SentinelAgentSdk.{Decision, Request, Response}
+      alias SentinelAgentSdk.Protocol.{GuardrailInspectEvent, GuardrailResponse}
 
       @impl true
       def on_configure(_config), do: :ok
@@ -130,12 +142,16 @@ defmodule SentinelAgentSdk.Agent do
       @impl true
       def on_request_complete(_request, _status, _duration_ms), do: :ok
 
+      @impl true
+      def on_guardrail_inspect(_event), do: GuardrailResponse.clean()
+
       defoverridable on_configure: 1,
                      on_request: 1,
                      on_request_body: 1,
                      on_response: 2,
                      on_response_body: 2,
-                     on_request_complete: 3
+                     on_request_complete: 3,
+                     on_guardrail_inspect: 1
     end
   end
 end
@@ -190,6 +206,7 @@ defmodule SentinelAgentSdk.ConfigurableAgent do
   """
 
   alias SentinelAgentSdk.{Decision, Request, Response}
+  alias SentinelAgentSdk.Protocol.{GuardrailInspectEvent, GuardrailResponse}
 
   @doc """
   Return the agent name for logging and identification.
@@ -251,18 +268,28 @@ defmodule SentinelAgentSdk.ConfigurableAgent do
               config :: term()
             ) :: :ok
 
+  @doc """
+  Inspect content for guardrail violations.
+
+  Called when content needs to be analyzed for prompt injection
+  or PII detection. Override to implement custom guardrail logic.
+  """
+  @callback on_guardrail_inspect(event :: GuardrailInspectEvent.t()) :: GuardrailResponse.t()
+
   @optional_callbacks on_config_applied: 1,
                       on_request: 2,
                       on_request_body: 2,
                       on_response: 3,
                       on_response_body: 3,
-                      on_request_complete: 4
+                      on_request_complete: 4,
+                      on_guardrail_inspect: 1
 
   defmacro __using__(_opts) do
     quote do
       @behaviour SentinelAgentSdk.ConfigurableAgent
 
       alias SentinelAgentSdk.{Decision, Request, Response}
+      alias SentinelAgentSdk.Protocol.{GuardrailInspectEvent, GuardrailResponse}
 
       @impl true
       def on_config_applied(_config), do: :ok
@@ -282,12 +309,16 @@ defmodule SentinelAgentSdk.ConfigurableAgent do
       @impl true
       def on_request_complete(_request, _status, _duration_ms, _config), do: :ok
 
+      @impl true
+      def on_guardrail_inspect(_event), do: GuardrailResponse.clean()
+
       defoverridable on_config_applied: 1,
                      on_request: 2,
                      on_request_body: 2,
                      on_response: 3,
                      on_response_body: 3,
-                     on_request_complete: 4
+                     on_request_complete: 4,
+                     on_guardrail_inspect: 1
     end
   end
 end

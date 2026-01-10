@@ -42,6 +42,8 @@ defmodule SentinelAgentSdk.Runner.Handler do
 
   alias SentinelAgentSdk.Protocol.{
     ConfigureEvent,
+    GuardrailInspectEvent,
+    GuardrailResponse,
     RequestBodyChunkEvent,
     RequestCompleteEvent,
     RequestHeadersEvent,
@@ -101,6 +103,9 @@ defmodule SentinelAgentSdk.Runner.Handler do
 
         "request_complete" ->
           handle_request_complete(handler, payload)
+
+        "guardrail_inspect" ->
+          handle_guardrail_inspect(handler, payload)
 
         _ ->
           Logger.warning("Unknown event type: #{event_type}")
@@ -300,6 +305,25 @@ defmodule SentinelAgentSdk.Runner.Handler do
     end
 
     {%{"success" => true}, handler}
+  end
+
+  defp handle_guardrail_inspect(handler, payload) do
+    event = GuardrailInspectEvent.from_map(payload)
+
+    # Call the agent's on_guardrail_inspect callback
+    response = handler.agent_module.on_guardrail_inspect(event)
+
+    # Build the response with guardrail_response in audit.custom
+    audit_response = %{
+      "tags" => if(response.detected, do: ["guardrail_detected"], else: []),
+      "rule_ids" => Enum.map(response.detections, & &1.category),
+      "confidence" => response.confidence,
+      "custom" => %{
+        "guardrail_response" => GuardrailResponse.to_map(response)
+      }
+    }
+
+    {%{"version" => 1, "audit" => audit_response}, handler}
   end
 
   defp is_configurable_agent?(module) do

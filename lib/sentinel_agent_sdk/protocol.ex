@@ -25,6 +25,10 @@ defmodule SentinelAgentSdk.Protocol do
           | :request_complete
           | :websocket_frame
           | :configure
+          | :guardrail_inspect
+
+  @type guardrail_inspection_type :: :prompt_injection | :pii_detection
+  @type detection_severity :: :low | :medium | :high | :critical
 
   @doc """
   Parse an event type string to atom.
@@ -37,6 +41,7 @@ defmodule SentinelAgentSdk.Protocol do
   def parse_event_type("request_complete"), do: :request_complete
   def parse_event_type("websocket_frame"), do: :websocket_frame
   def parse_event_type("configure"), do: :configure
+  def parse_event_type("guardrail_inspect"), do: :guardrail_inspect
   def parse_event_type(other), do: raise("Unknown event type: #{other}")
 
   # Request Metadata
@@ -281,6 +286,201 @@ defmodule SentinelAgentSdk.Protocol do
     end
   end
 
+  # Guardrail Types
+
+  defmodule TextSpan do
+    @moduledoc "Byte span indicating location in content."
+
+    @type t :: %__MODULE__{
+            start: integer(),
+            end_pos: integer()
+          }
+
+    defstruct [:start, :end_pos]
+
+    @doc "Create TextSpan from a map."
+    @spec from_map(map()) :: t()
+    def from_map(data) when is_map(data) do
+      %__MODULE__{
+        start: Map.get(data, "start", 0),
+        end_pos: Map.get(data, "end", 0)
+      }
+    end
+
+    @doc "Convert to map for serialization."
+    @spec to_map(t()) :: map()
+    def to_map(%__MODULE__{} = span) do
+      %{"start" => span.start, "end" => span.end_pos}
+    end
+  end
+
+  defmodule GuardrailDetection do
+    @moduledoc "A single guardrail detection result."
+
+    alias SentinelAgentSdk.Protocol.TextSpan
+
+    @type t :: %__MODULE__{
+            category: String.t(),
+            description: String.t(),
+            severity: atom(),
+            confidence: float() | nil,
+            span: TextSpan.t() | nil
+          }
+
+    defstruct [:category, :description, severity: :medium, confidence: nil, span: nil]
+
+    @doc "Create a new detection."
+    @spec new(String.t(), String.t()) :: t()
+    def new(category, description) do
+      %__MODULE__{category: category, description: description}
+    end
+
+    @doc "Set the severity level."
+    @spec with_severity(t(), atom()) :: t()
+    def with_severity(detection, severity), do: %{detection | severity: severity}
+
+    @doc "Set the confidence score."
+    @spec with_confidence(t(), float()) :: t()
+    def with_confidence(detection, confidence), do: %{detection | confidence: confidence}
+
+    @doc "Set the text span."
+    @spec with_span(t(), integer(), integer()) :: t()
+    def with_span(detection, start_pos, end_pos) do
+      %{detection | span: %TextSpan{start: start_pos, end_pos: end_pos}}
+    end
+
+    @doc "Convert to map for serialization."
+    @spec to_map(t()) :: map()
+    def to_map(%__MODULE__{} = detection) do
+      result = %{
+        "category" => detection.category,
+        "description" => detection.description,
+        "severity" => Atom.to_string(detection.severity)
+      }
+
+      result =
+        if detection.confidence != nil,
+          do: Map.put(result, "confidence", detection.confidence),
+          else: result
+
+      result =
+        if detection.span != nil,
+          do: Map.put(result, "span", TextSpan.to_map(detection.span)),
+          else: result
+
+      result
+    end
+  end
+
+  defmodule GuardrailInspectEvent do
+    @moduledoc "Event for guardrail content inspection."
+
+    @type t :: %__MODULE__{
+            correlation_id: String.t(),
+            inspection_type: atom(),
+            content: String.t(),
+            model: String.t() | nil,
+            categories: [String.t()],
+            route_id: String.t() | nil,
+            metadata: map()
+          }
+
+    defstruct [
+      :correlation_id,
+      :inspection_type,
+      :content,
+      :model,
+      :route_id,
+      categories: [],
+      metadata: %{}
+    ]
+
+    @doc "Create GuardrailInspectEvent from a map."
+    @spec from_map(map()) :: t()
+    def from_map(data) when is_map(data) do
+      inspection_type =
+        case Map.get(data, "inspection_type", "prompt_injection") do
+          "prompt_injection" -> :prompt_injection
+          "pii_detection" -> :pii_detection
+          other -> String.to_atom(other)
+        end
+
+      %__MODULE__{
+        correlation_id: Map.get(data, "correlation_id", ""),
+        inspection_type: inspection_type,
+        content: Map.get(data, "content", ""),
+        model: Map.get(data, "model"),
+        categories: Map.get(data, "categories", []),
+        route_id: Map.get(data, "route_id"),
+        metadata: Map.get(data, "metadata", %{})
+      }
+    end
+  end
+
+  defmodule GuardrailResponse do
+    @moduledoc "Response from guardrail inspection."
+
+    alias SentinelAgentSdk.Protocol.GuardrailDetection
+
+    @type t :: %__MODULE__{
+            detected: boolean(),
+            confidence: float(),
+            detections: [GuardrailDetection.t()],
+            redacted_content: String.t() | nil
+          }
+
+    defstruct detected: false, confidence: 0.0, detections: [], redacted_content: nil
+
+    @doc "Create a clean response indicating nothing detected."
+    @spec clean() :: t()
+    def clean, do: %__MODULE__{}
+
+    @doc "Create a response with a single detection."
+    @spec with_detection(GuardrailDetection.t()) :: t()
+    def with_detection(detection) do
+      %__MODULE__{
+        detected: true,
+        confidence: detection.confidence || 1.0,
+        detections: [detection]
+      }
+    end
+
+    @doc "Add a detection to this response."
+    @spec add_detection(t(), GuardrailDetection.t()) :: t()
+    def add_detection(response, detection) do
+      new_confidence = max(response.confidence, detection.confidence || 0.0)
+
+      %{
+        response
+        | detected: true,
+          confidence: new_confidence,
+          detections: response.detections ++ [detection]
+      }
+    end
+
+    @doc "Set the redacted content for PII detection."
+    @spec with_redacted_content(t(), String.t()) :: t()
+    def with_redacted_content(response, content) do
+      %{response | redacted_content: content}
+    end
+
+    @doc "Convert to map for serialization."
+    @spec to_map(t()) :: map()
+    def to_map(%__MODULE__{} = response) do
+      result = %{
+        "detected" => response.detected,
+        "confidence" => response.confidence,
+        "detections" => Enum.map(response.detections, &GuardrailDetection.to_map/1)
+      }
+
+      if response.redacted_content != nil do
+        Map.put(result, "redacted_content", response.redacted_content)
+      else
+        result
+      end
+    end
+  end
+
   # Response Types
 
   defmodule HeaderOp do
@@ -516,6 +716,7 @@ defmodule SentinelAgentSdk.Protocol do
           | {:request_complete, RequestCompleteEvent.t()}
           | {:websocket_frame, WebSocketFrameEvent.t()}
           | {:configure, ConfigureEvent.t()}
+          | {:guardrail_inspect, GuardrailInspectEvent.t()}
   def parse_event(%{"type" => type} = data) do
     event_type = parse_event_type(type)
     event_data = Map.get(data, "data", data)
@@ -529,6 +730,7 @@ defmodule SentinelAgentSdk.Protocol do
         :request_complete -> RequestCompleteEvent.from_map(event_data)
         :websocket_frame -> WebSocketFrameEvent.from_map(event_data)
         :configure -> ConfigureEvent.from_map(event_data)
+        :guardrail_inspect -> GuardrailInspectEvent.from_map(event_data)
       end
 
     {event_type, event}
