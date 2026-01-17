@@ -6,7 +6,14 @@ defmodule SentinelAgentSdk do
   Sentinel proxy. Agents can inspect and modify HTTP requests and responses,
   implement security policies, rate limiting, and more.
 
-  ## Quick Start
+  ## Protocol Versions
+
+  The SDK supports two protocol versions:
+
+  - **v1 (Legacy)** - JSON over UDS, simple request/response
+  - **v2 (Current)** - Enhanced protocol with capabilities, health checks, metrics
+
+  ## Quick Start (v1)
 
       defmodule MyAgent do
         use SentinelAgentSdk.Agent
@@ -28,7 +35,37 @@ defmodule SentinelAgentSdk do
       # Run the agent
       SentinelAgentSdk.run(MyAgent)
 
-  ## Core Modules
+  ## Quick Start (v2)
+
+      defmodule MyAgentV2 do
+        use SentinelAgentSdk.V2.Agent
+
+        @impl true
+        def name, do: "my-agent-v2"
+
+        @impl true
+        def capabilities do
+          AgentCapabilities.new()
+          |> AgentCapabilities.with_name(name())
+          |> AgentCapabilities.handles_request_headers()
+          |> AgentCapabilities.supports_health_check()
+        end
+
+        @impl true
+        def on_request(request) do
+          Decision.allow()
+        end
+
+        @impl true
+        def health_check do
+          HealthStatus.healthy()
+        end
+      end
+
+      # Run with v2 protocol
+      SentinelAgentSdk.V2.run(MyAgentV2)
+
+  ## Core Modules (v1)
 
   - `SentinelAgentSdk.Agent` - The behaviour for implementing agents
   - `SentinelAgentSdk.ConfigurableAgent` - For agents with typed configuration
@@ -36,6 +73,15 @@ defmodule SentinelAgentSdk do
   - `SentinelAgentSdk.Response` - Response wrapper with helper functions
   - `SentinelAgentSdk.Decision` - Fluent API for building agent responses
   - `SentinelAgentSdk.Runner` - Agent server and runner
+
+  ## V2 Modules
+
+  - `SentinelAgentSdk.V2` - V2 protocol entry point
+  - `SentinelAgentSdk.V2.Agent` - V2 agent behaviour with capabilities
+  - `SentinelAgentSdk.V2.ConfigurableAgent` - V2 agent with typed config
+  - `SentinelAgentSdk.V2.Types` - V2 protocol types (capabilities, health, metrics)
+  - `SentinelAgentSdk.V2.Handler` - V2 event handler
+  - `SentinelAgentSdk.V2.Runner` - V2 runner with transport support
   """
 
   alias SentinelAgentSdk.Runner
